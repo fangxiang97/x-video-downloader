@@ -1,6 +1,6 @@
 {
   "name": "x-video-downloader-extension",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "private": true,
   "description": "Chrome / Edge extension to identify and download MP4 videos from X / Twitter.",
   "scripts": {
@@ -13,6 +13,6 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/zhangfangxiang/x-video-downloader.git"
+    "url": "https://github.com/fangxiang97/x-video-downloader.git"
   }
 }
