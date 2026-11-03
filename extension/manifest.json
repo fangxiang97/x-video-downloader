@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "X 视频下载助手",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "识别当前 X / Twitter 页面已加载的 MP4 视频，选择画质并保存到本地。",
   "minimum_chrome_version": "111",
   "permissions": ["activeTab", "downloads", "storage", "scripting"],

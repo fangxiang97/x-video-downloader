@@ -3,6 +3,8 @@ const $ = id => document.getElementById(id);
 let activeTab = null;
 let historyBusy = false;
 let scanBusy = false;
+let scanGeneration = 0;
+let navigationTimer = null;
 
 function notice(text, success = false) {
   $('notice').textContent = text;
@@ -27,7 +29,8 @@ function qualityLabel(variant, index) {
   const label = variant.width ? `${variant.width} × ${variant.height}` : '原始画质';
   return label + (index === 0 ? ' · 最高' : '');
 }
-function renderMedia(items) {
+function renderMedia(items, context = null) {
+  const tabId = activeTab?.id;
   $('media-list').replaceChildren();
   $('count').textContent = String(items.length);
   $('status').textContent = items.length ? `找到 ${items.length} 个视频` : '未识别';
@@ -68,7 +71,7 @@ function renderMedia(items) {
       button.textContent = '正在开始…';
       notice('');
       try {
-        await message({type: 'DOWNLOAD', tabId: activeTab.id, key: item.key, variantIndex: Number(select.value)});
+        await message({type: 'DOWNLOAD', tabId, key: item.key, context, variantIndex: Number(select.value)});
         notice('已加入浏览器下载列表。', true);
         await updateDownloads();
       } catch (error) {
@@ -125,40 +128,74 @@ async function updateDownloads() {
   finally { historyBusy = false; }
 }
 async function scan(force = false) {
-  if (scanBusy || !activeTab || !XClip.isXUrl(activeTab.url)) return;
+  if (scanBusy) return;
+  const generation = ++scanGeneration;
   scanBusy = true;
+  renderMedia([]);
+  $('empty').hidden = true;
+  $('empty-title').textContent = '还没识别到视频';
+  $('diagnostics').hidden = true;
   $('status').textContent = '检测中';
   for (const id of ['rescan', 'rescan-empty']) $(id).disabled = true;
   notice('');
   try {
-    const result = await message({type: 'GET_MEDIA', tabId: activeTab.id, rescan: true, force: Boolean(force)});
+    const [tab] = await chrome.tabs.query({active: true, currentWindow: true});
+    if (generation !== scanGeneration) return;
+    activeTab = tab;
+    if (!tab || !XClip.isXUrl(tab.url)) throw new Error('请先打开要下载的 X / Twitter 视频页面。');
+    const result = await message({type: 'GET_MEDIA', tabId: tab.id, rescan: true, force: Boolean(force)});
+    if (generation !== scanGeneration) return;
+    const [latest] = await chrome.tabs.query({active: true, currentWindow: true});
+    if (generation !== scanGeneration) return;
+    if (latest?.id !== tab.id || XClip.pageKey(latest?.url) !== XClip.pageKey(result.pageUrl) || result.changed) {
+      scanBusy = false;
+      void scan(force);
+      return;
+    }
     if (result.pageUrl) {
       activeTab.url = result.pageUrl;
       const id = XClip.postId(result.pageUrl);
       $('page-label').textContent = id ? `帖子 ${id}` : '当前页面中已加载的视频';
     }
-    renderMedia(result.items);
+    renderMedia(result.items, result.context);
     const details = result.diagnostics;
     $('diagnostics').hidden = !details || Boolean(result.items.length);
     if (details) $('diagnostics').textContent = `页面连接：${details.reader ? '正常' : '未连接'} · 播放器检测：${details.observer ? '已运行' : '未运行'} · 已读取 ${details.responses || 0} 次响应`;
     if (!result.items.length) {
       $('empty-description').textContent = !details?.reader
-        ? '插件还没有连接到这个页面。请在扩展管理页确认已重新加载 1.0.2 版，然后刷新当前 X 页面。'
+        ? `插件还没有连接到这个页面。请在扩展管理页确认已重新加载 ${XClip.VERSION} 版，然后刷新当前 X 页面。`
         : '已主动检查播放器和公开帖子数据，暂未找到可下载的 MP4。请播放视频后再检测；仅提供 HLS 的视频暂不支持。';
       if (details?.lastError) notice(`页面检测失败：${details.lastError}`);
       else if (result.fallback?.error) notice(result.fallback.error);
     }
   } catch (error) {
+    if (generation !== scanGeneration) return;
     notice(error.message);
     $('status').textContent = '检测失败';
     $('empty').hidden = false;
     $('empty-title').textContent = '这次检测没有完成';
     $('empty-description').textContent = '请确认扩展已重新加载，再点击重新检测。';
   } finally {
-    scanBusy = false;
-    for (const id of ['rescan', 'rescan-empty']) $(id).disabled = false;
+    if (generation === scanGeneration) {
+      scanBusy = false;
+      for (const id of ['rescan', 'rescan-empty']) $(id).disabled = false;
+    }
   }
 }
+function pageChanged() {
+  scanGeneration++;
+  scanBusy = false;
+  renderMedia([]);
+  $('empty').hidden = true;
+  $('status').textContent = '页面已变化，正在重新检测';
+  notice('');
+  clearTimeout(navigationTimer);
+  navigationTimer = setTimeout(() => scan(true), 150);
+}
+chrome.tabs.onUpdated?.addListener((tabId, change) => {
+  if (tabId === activeTab?.id && (change.url || change.status)) pageChanged();
+});
+chrome.tabs.onActivated?.addListener(pageChanged);
 function saveHint() {
   $('save-hint').textContent = $('ask-where').checked ? '下载时会弹出保存窗口，由你选择文件夹和文件名。' : '默认保存到浏览器下载目录中的「X视频」文件夹。';
 }

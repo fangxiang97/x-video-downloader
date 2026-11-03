@@ -4,6 +4,7 @@
   root.XClip = api;
 })(globalThis, function () {
   'use strict';
+  const VERSION = '1.0.3';
   const X_HOSTS = new Set(['x.com', 'www.x.com', 'twitter.com', 'www.twitter.com', 'mobile.twitter.com']);
 
   function isXUrl(value) {
@@ -13,6 +14,11 @@
   function postId(value) {
     if (!isXUrl(value)) return null;
     return new URL(value).pathname.match(/^\/[A-Za-z0-9_]+\/status\/(\d{5,25})(?:\/|$)/)?.[1] || null;
+  }
+  function pageKey(value) {
+    if (!isXUrl(value)) return '';
+    const url = new URL(value);
+    return url.origin + url.pathname;
   }
   function mp4Url(value) {
     if (typeof value !== 'string' || value.length > 8192) return null;
@@ -162,13 +168,16 @@
         other.authorHandle = item.authorHandle || other.authorHandle;
         other.posterUrl = other.posterUrl || item.posterUrl;
         other.variants = joined;
+        other.pageUrl = item.pageUrl;
       } else result.push(item);
     }
     return result.slice(-80);
   }
   function forPage(items, pageUrl) {
+    const page = pageKey(pageUrl);
+    if (!page) return [];
     const id = postId(pageUrl);
-    return id ? items.filter(item => item.tweetId === id) : items;
+    return items.filter(item => pageKey(item.pageUrl) === page && (!id || item.tweetId === id));
   }
   function filename(item, variant) {
     const id = item.tweetId || 'video';
@@ -177,5 +186,5 @@
     const title = Array.from(cleanText(item.title).replace(/[<>:"/\\|?*]/g, ' ').replace(/\s+/g, ' ').trim()).slice(0, 32).join('').replace(/[ .]+$/g, '');
     return `X视频/${title ? title + '_' : 'X_'}${id}${media}${size}.mp4`;
   }
-  return Object.freeze({isXUrl, postId, mp4Url, variants, cleanText, posterUrl, cleanItem, extractMedia, extractPlayerMedia, syndicationUrl, directMedia, mergeMedia, forPage, filename});
+  return Object.freeze({VERSION, isXUrl, postId, pageKey, mp4Url, variants, cleanText, posterUrl, cleanItem, extractMedia, extractPlayerMedia, syndicationUrl, directMedia, mergeMedia, forPage, filename});
 });
