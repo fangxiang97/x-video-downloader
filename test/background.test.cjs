@@ -10,7 +10,8 @@ function background(options = {}) {
   const state = {}, calls = [], ids = new Map(), injections = [], requests = [];
   const listeners = {};
   const local = {askWhere: true};
-  let nextId = 10;
+  let nextId = 10, documentId = 'document-1', revision = 0;
+  const tab = {id: 1, url: pageUrl, status: 'complete'};
   const chrome = {
     runtime: {id: 'test-extension', onMessage: {addListener: callback => listeners.message = callback}},
     storage: {
@@ -18,13 +19,17 @@ function background(options = {}) {
         set: async value => { Object.assign(state, structuredClone(value)); }, remove: async key => { delete state[key]; }},
       local: {get: async key => ({[key]: local[key]})}
     },
-    tabs: {get: async id => ({id, url: pageUrl}),
+    tabs: {get: async id => ({...tab, id}),
       sendMessage: async (id, message) => {
         if (options.readerError) throw new Error(options.readerError);
         if (message.type === 'PING' && options.missingBridge && !injections.some(i => i.world === 'ISOLATED')) throw new Error('No receiver');
-        return {ok: true, version: '1.0.2', diagnostics: {version: '1.0.2', responses: 0, domScans: 1}};
+        if (message.type === 'RESCAN') {
+          revision++;
+          await found(options.scanItems || [], {revision});
+        }
+        return {ok: true, version: api.VERSION, diagnostics: {version: api.VERSION, responses: 0, domScans: 1}};
       },
-      onRemoved: {addListener() {}}, onUpdated: {addListener() {}}},
+      onRemoved: {addListener: callback => listeners.removed = callback}, onUpdated: {addListener: callback => listeners.updated = callback}},
     scripting: {executeScript: async request => { injections.push(request); if (options.injectionError) throw new Error(options.injectionError); return []; }},
     action: {setBadgeBackgroundColor: async () => {}, setBadgeText: async () => {}},
     downloads: {
@@ -33,12 +38,25 @@ function background(options = {}) {
     }
   };
   const context = vm.createContext({chrome, URL, console, setTimeout, clearTimeout, AbortController,
-    fetch: async (url, request) => { requests.push({url, request}); return {ok: options.httpError ? false : true, status: options.httpError || 200, json: async () => options.publicData || {}}; }});
+    fetch: async (url, request) => { requests.push({url, request}); return options.fetch ? options.fetch(url) : {ok: options.httpError ? false : true, status: options.httpError || 200, json: async () => options.publicData || {}}; }});
   context.importScripts = file => vm.runInContext(fs.readFileSync(path.join(__dirname, '../extension', file), 'utf8'), context);
   vm.runInContext(fs.readFileSync(path.join(__dirname, '../extension/background.js'), 'utf8'), context);
   const send = (message, sender = {id: 'test-extension', url: 'chrome-extension://test-extension/popup.html'}) => new Promise(resolve => listeners.message(message, sender, resolve));
-  const found = items => send({type: 'MEDIA_FOUND', items}, {id: 'test-extension', frameId: 0, tab: {id: 1}, url: pageUrl});
-  return {send, found, calls, state, local, injections, requests};
+  const found = (items, changes = {}) => send({type: 'MEDIA_FOUND', version: api.VERSION, pageUrl: changes.pageUrl || tab.url,
+    revision: changes.revision ?? revision, items}, {id: 'test-extension', frameId: 0, tab: {id: 1},
+    url: changes.pageUrl || tab.url, documentId: changes.documentId || documentId});
+  const mediaContext = () => {
+    const {pageUrl, documentId, revision, generation} = state['media:1'];
+    return {pageUrl, documentId, revision, generation};
+  };
+  const download = (key, variantIndex = 0, saved = mediaContext()) => send({type: 'DOWNLOAD', tabId: 1, key, variantIndex, context: saved});
+  const navigate = async (url, reload = false) => {
+    tab.url = url;
+    if (reload) tab.status = 'loading';
+    await listeners.updated(1, reload ? {status: 'loading'} : {url}, {...tab});
+    if (reload) { documentId += '-next'; revision = 0; tab.status = 'complete'; }
+  };
+  return {send, found, download, context: mediaContext, navigate, tab, calls, state, local, injections, requests};
 }
 test('concurrent response arrivals keep both videos in the account-free cache', async () => {
   const app = background();
@@ -55,7 +73,7 @@ test('download honors selected variant, save dialog, and non-overwrite behavior'
   const app = background();
   const [item] = api.extractMedia(tweet(), pageUrl);
   await app.found([item]);
-  const result = await app.send({type: 'DOWNLOAD', tabId: 1, key: item.key, variantIndex: 1});
+  const result = await app.download(item.key, 1);
   assert.equal(result.ok, true);
   assert.equal(app.calls.length, 1);
   assert.equal(app.calls[0].url, item.variants[1].url);
@@ -69,11 +87,11 @@ test('a quoted tweet or bad variant cannot silently download a different video',
   const app = background();
   const quote = api.extractMedia(tweet('123450000002', '7_quote'), pageUrl);
   await app.found(quote);
-  const wrong = await app.send({type: 'DOWNLOAD', tabId: 1, key: quote[0].key});
+  const wrong = await app.download(quote[0].key);
   assert.equal(wrong.ok, false);
   const [current] = api.extractMedia(tweet(), pageUrl);
   await app.found([current]);
-  const invalid = await app.send({type: 'DOWNLOAD', tabId: 1, key: current.key, variantIndex: 100});
+  const invalid = await app.download(current.key, 100);
   assert.equal(invalid.ok, false);
   assert.equal(app.calls.length, 0);
 });
@@ -115,4 +133,87 @@ test('public API errors and unrelated responses never create a false video', asy
     assert.notEqual(result.fallback.state, 'found');
     assert.equal(app.calls.length, 0);
   }
+});
+
+test('switching timeline routes clears videos and rejects late messages from the previous route', async () => {
+  const app = background();
+  const home = 'https://x.com/home';
+  const profile = 'https://x.com/another_user';
+  await app.navigate(home);
+  const old = api.extractMedia(tweet(), home);
+  await app.found(old);
+  assert.equal((await app.send({type: 'GET_MEDIA', tabId: 1})).items.length, 1);
+  await app.navigate(profile);
+  assert.equal(app.state['media:1'].items.length, 0);
+  const late = await app.found(old, {pageUrl: home});
+  assert.equal(late.ignored, true);
+  assert.equal((await app.send({type: 'GET_MEDIA', tabId: 1})).items.length, 0);
+  const fresh = api.extractMedia(tweet('123450000002', '7_fresh'), profile);
+  await app.found(fresh, {revision: 2});
+  const result = await app.send({type: 'GET_MEDIA', tabId: 1});
+  assert.equal(result.items.length, 1);
+  assert.equal(result.items[0].tweetId, '123450000002');
+  await app.download(fresh[0].key);
+  assert.equal(app.calls[0].url, fresh[0].variants[0].url);
+});
+test('reload of the same URL rejects the old document and stale download buttons', async () => {
+  const app = background();
+  const old = api.extractMedia(tweet(), pageUrl);
+  await app.found(old);
+  const saved = app.context();
+  await app.navigate(pageUrl, true);
+  assert.equal(app.state['media:1'].items.length, 0);
+  const late = await app.found(old, {documentId: 'document-1', revision: 50});
+  assert.equal(late.ignored, true);
+  const freshTweet = tweet();
+  freshTweet.legacy.extended_entities.media[0].video_info.variants = [{url: mp4('1280x720', 'fresh-after-reload')}];
+  const fresh = api.extractMedia(freshTweet, pageUrl);
+  await app.found(fresh);
+  const blocked = await app.download(old[0].key, 0, saved);
+  assert.equal(blocked.ok, false);
+  assert.equal(app.calls.length, 0);
+  await app.download(fresh[0].key);
+  assert.match(app.calls[0].url, /fresh-after-reload/);
+});
+test('rescan clears cached media even when the page reader cannot run', async () => {
+  const app = background({readerError: 'No receiver', injectionError: 'Cannot access this page'});
+  await app.found(api.extractMedia(tweet(), pageUrl));
+  const result = await app.send({type: 'GET_MEDIA', tabId: 1, rescan: true});
+  assert.equal(result.items.length, 0);
+  assert.match(result.diagnostics.lastError, /Cannot access/);
+});
+test('a successful public fallback can be fetched again after rescan clears the cache', async () => {
+  const t = tweet();
+  const app = background({publicData: {id_str: t.rest_id, mediaDetails: t.legacy.extended_entities.media}});
+  const first = await app.send({type: 'GET_MEDIA', tabId: 1, rescan: true});
+  const second = await app.send({type: 'GET_MEDIA', tabId: 1, rescan: true});
+  assert.equal(first.items.length, 1);
+  assert.equal(second.items.length, 1);
+  assert.equal(app.requests.length, 2);
+});
+test('an old public response arriving after a same-URL reload cannot restore old media', async () => {
+  let release;
+  const requested = new Promise(resolve => { release = resolve; });
+  let started;
+  const fetching = new Promise(resolve => { started = resolve; });
+  const t = tweet();
+  const app = background({fetch: async () => { started(); return requested; }});
+  const pending = app.send({type: 'GET_MEDIA', tabId: 1, rescan: true});
+  await fetching;
+  await app.navigate(pageUrl, true);
+  await app.found([]);
+  release({ok: true, json: async () => ({id_str: t.rest_id, mediaDetails: t.legacy.extended_entities.media})});
+  const result = await pending;
+  assert.equal(result.fallback.state, 'changed');
+  assert.equal(result.items.length, 0);
+});
+test('old observer revisions cannot repopulate a freshly rescanned page', async () => {
+  const app = background();
+  const old = api.extractMedia(tweet(), pageUrl);
+  await app.found(old);
+  const saved = app.context();
+  await app.send({type: 'GET_MEDIA', tabId: 1, rescan: true});
+  const late = await app.found(old, {revision: saved.revision});
+  assert.equal(late.ignored, true);
+  assert.equal(app.state['media:1'].items.length, 0);
 });
