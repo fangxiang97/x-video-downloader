@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>X 视频下载助手</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <header class="header">
+    <img src="icons/48.png" alt="" width="38" height="38">
+    <div class="brand"><h1>X 视频下载助手</h1><p>看见，收藏，留在本地。</p></div>
+    <span class="version">1.0.2</span>
+  </header>
+  <main>
+    <section class="context">
+      <div class="context-top"><span class="eyebrow">当前页面</span><span id="status" class="pill">检测中</span></div>
+      <p id="page-label">正在读取视频信息…</p>
+    </section>
+
+    <section id="empty" class="empty" hidden>
+      <div class="empty-icon" aria-hidden="true">↧</div>
+      <h2 id="empty-title">还没识别到视频</h2>
+      <p id="empty-description">播放视频后点击「重新检测」。如果刚更新插件，请先在扩展管理页重新加载，再刷新 X 页面。</p>
+      <button id="reload" class="button primary wide">刷新当前页面</button>
+      <button id="rescan-empty" class="button secondary wide">重新检测</button>
+      <p id="diagnostics" class="diagnostics" hidden></p>
+    </section>
+
+    <section id="media-section" hidden>
+      <div class="section-heading"><h2>可下载的视频 <span id="count"></span></h2><button id="rescan" class="text-button">重新检测</button></div>
+      <div id="media-list"></div>
+      <p class="hint">默认选择最高可用画质，直接保存原始 MP4。</p>
+    </section>
+
+    <section class="settings">
+      <label><input type="checkbox" id="ask-where"><span>每次下载时选择保存位置</span></label>
+      <p id="save-hint">默认保存到浏览器下载目录中的「X视频」文件夹。</p>
+    </section>
+
+    <section id="downloads-section" class="downloads" hidden>
+      <div class="section-heading"><h2>最近下载</h2><button id="open-downloads" class="text-button">查看全部 ↗</button></div>
+      <div id="downloads-list"></div>
+    </section>
+    <p id="notice" class="notice" role="status" aria-live="polite" hidden></p>
+  </main>
+  <footer><span class="local-dot"></span>本机保存<span class="footer-divider">·</span>无需额外运行软件</footer>
+  <script src="shared.js"></script>
+  <script src="popup.js"></script>
+</body>
+</html>

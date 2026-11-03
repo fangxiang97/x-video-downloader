@@ -1,0 +1,34 @@
+{
+  "manifest_version": 3,
+  "name": "X 视频下载助手",
+  "version": "1.0.2",
+  "description": "识别当前 X / Twitter 页面已加载的 MP4 视频，选择画质并保存到本地。",
+  "minimum_chrome_version": "111",
+  "permissions": ["activeTab", "downloads", "storage", "scripting"],
+  "host_permissions": [
+    "https://x.com/*", "https://www.x.com/*", "https://twitter.com/*",
+    "https://www.twitter.com/*", "https://mobile.twitter.com/*",
+    "https://cdn.syndication.twimg.com/*"
+  ],
+  "background": {"service_worker": "background.js"},
+  "action": {
+    "default_title": "X 视频下载助手",
+    "default_popup": "popup.html",
+    "default_icon": {"16": "icons/16.png", "32": "icons/32.png", "48": "icons/48.png", "128": "icons/128.png"}
+  },
+  "icons": {"16": "icons/16.png", "32": "icons/32.png", "48": "icons/48.png", "128": "icons/128.png"},
+  "content_scripts": [
+    {
+      "matches": ["https://x.com/*", "https://www.x.com/*", "https://twitter.com/*", "https://www.twitter.com/*", "https://mobile.twitter.com/*"],
+      "js": ["shared.js", "page-observer.js"],
+      "run_at": "document_start",
+      "world": "MAIN"
+    },
+    {
+      "matches": ["https://x.com/*", "https://www.x.com/*", "https://twitter.com/*", "https://www.twitter.com/*", "https://mobile.twitter.com/*"],
+      "js": ["shared.js", "content.js"],
+      "run_at": "document_start",
+      "world": "ISOLATED"
+    }
+  ]
+}
